@@ -1,0 +1,13 @@
+# Security & Credentials
+.env
+config.js
+*.pem
+secrets.json
+
+# Build Artifacts & Packages
+lambda_build/
+*.zip
+
+# System Files
+.DS_Store
+Thumbs.db
