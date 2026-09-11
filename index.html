@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Weather & Commute Alert Dispatcher</title>
-    <!-- Load local configuration (API_URL) -->
     <script src="config.js"></script>
     <style>
         * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
@@ -19,46 +18,109 @@
         button { width: 100%; padding: 12px; background-color: #3182ce; color: white; border: none; border-radius: 6px; font-size: 1em; font-weight: bold; cursor: pointer; margin-top: 10px; transition: background 0.2s; }
         button:hover { background-color: #2b6cb0; }
         button:disabled { background-color: #a0aec0; cursor: not-allowed; }
+        button.secondary { background-color: #4a5568; }
+        button.secondary:hover { background-color: #2d3748; }
+        button.danger { background-color: #c53030; }
+        button.danger:hover { background-color: #9b2c2c; }
         #message { margin-top: 20px; padding: 12px; border-radius: 6px; text-align: center; font-size: 0.9em; display: none; }
         .success { background-color: #c6f6d5; color: #22543d; border: 1px solid #9ae6b4; }
         .error { background-color: #fed7d7; color: #742a2a; border: 1px solid #feb2b2; }
+        .switch-link { display: block; text-align: center; margin-top: 16px; color: #3182ce; cursor: pointer; font-size: 0.9em; background: none; border: none; padding: 0; width: auto; font-weight: 600; }
+        .switch-link:hover { background: none; text-decoration: underline; color: #2b6cb0; }
+        .hidden { display: none; }
+        .trip { border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-top: 12px; }
+        .trip p { margin: 0 0 10px; color: #3d4852; font-size: 0.95em; }
+        .trip span { color: #718096; font-size: 0.85em; }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>🚗 Commute Weather Alerts</h2>
-    <p class="subtitle">Get daily weather forecasts delivered before your morning commute.</p>
+    <div id="signupView">
+        <h2>🚗 Commute Weather Alerts</h2>
+        <p class="subtitle">Get daily weather forecasts delivered before your morning commute.</p>
 
-    <form id="signupForm">
-        <div class="form-group">
-            <label for="email">Email Address</label>
-            <input type="email" id="email" placeholder="your.email@example.com" required>
-        </div>
+        <form id="signupForm">
+            <div class="form-group">
+                <label for="email">Email Address</label>
+                <input type="email" id="email" placeholder="your.email@example.com" required>
+            </div>
 
-        <div class="form-group">
-            <label for="startCity">Start Location (Origin)</label>
-            <input type="text" id="startCity" placeholder="e.g., Pikesville" required>
-        </div>
+            <div class="form-group">
+                <label for="startCity">Start Location (Origin)</label>
+                <input type="text" id="startCity" placeholder="e.g., Pikesville" required>
+            </div>
 
-        <div class="form-group">
-            <label for="endCity">End Location (Destination)</label>
-            <input type="text" id="endCity" placeholder="e.g., Baltimore" required>
-        </div>
+            <div class="form-group">
+                <label for="endCity">End Location (Destination)</label>
+                <input type="text" id="endCity" placeholder="e.g., Baltimore" required>
+            </div>
 
-        <div class="form-group">
-            <label for="scheduleTime">Alert Delivery Time</label>
-            <input type="time" id="scheduleTime" value="07:00" required>
-        </div>
+            <div class="form-group">
+                <label for="scheduleTime">Alert Delivery Time</label>
+                <input type="time" id="scheduleTime" value="07:00" required>
+            </div>
 
-        <button type="submit" id="submitBtn">Sign Up for Alerts</button>
-    </form>
+            <button type="submit" id="submitBtn">Sign Up for Alerts</button>
+        </form>
+        <button type="button" class="switch-link" id="showManage">Already subscribed? Manage alerts</button>
+    </div>
+
+    <div id="manageView" class="hidden">
+        <h2>Manage Alerts</h2>
+        <p class="subtitle">Sign in with your email to view or unsubscribe from commute alerts.</p>
+
+        <form id="signinForm">
+            <div class="form-group">
+                <label for="manageEmail">Email Address</label>
+                <input type="email" id="manageEmail" placeholder="your.email@example.com" required>
+            </div>
+            <button type="submit" id="signinBtn">View my trips</button>
+        </form>
+
+        <div id="tripsList"></div>
+        <button type="button" class="switch-link" id="showSignup">Back to sign up</button>
+    </div>
 
     <div id="message"></div>
 </div>
 
 <script>
-    // Strict city validator to reject random input like "idk" or "lol"
+    const messageDiv = document.getElementById('message');
+    const signupView = document.getElementById('signupView');
+    const manageView = document.getElementById('manageView');
+    const tripsList = document.getElementById('tripsList');
+
+    function showMessage(type, text) {
+        messageDiv.className = type;
+        messageDiv.innerText = text;
+        messageDiv.style.display = "block";
+    }
+
+    function hideMessage() {
+        messageDiv.style.display = "none";
+    }
+
+    function apiUrl() {
+        if (typeof API_URL === 'undefined' || !API_URL || API_URL.includes('YOUR_LAMBDA')) {
+            throw new Error('API_URL is not set in config.js');
+        }
+        return API_URL;
+    }
+
+    async function postAction(payload) {
+        const response = await fetch(apiUrl(), {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.error || 'Request failed.');
+        }
+        return data;
+    }
+
     async function validateCity(city) {
         const cleanCity = city.split(',')[0].trim().toLowerCase();
         if (cleanCity.length < 3) return false;
@@ -66,10 +128,8 @@
         try {
             const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cleanCity)}&count=5&format=json`);
             const data = await res.json();
-            
             if (!data.results || data.results.length === 0) return false;
 
-            // Require exact/prefix name match AND a valid populated place feature code (PPL)
             return data.results.some(place => {
                 const placeName = place.name.toLowerCase();
                 const isNameMatch = placeName === cleanCity || placeName.startsWith(cleanCity);
@@ -81,26 +141,71 @@
         }
     }
 
+    function renderTrips(email, trips) {
+        if (!trips.length) {
+            tripsList.innerHTML = '<p class="subtitle">No commute alerts found for this email.</p>';
+            return;
+        }
+
+        tripsList.innerHTML = trips.map(trip => `
+            <div class="trip">
+                <p><strong>${trip.start_city}</strong> → <strong>${trip.end_city}</strong></p>
+                <span>Alert time: ${trip.schedule_time}</span>
+                <button type="button" class="danger" data-email="${email}">Unsubscribe</button>
+            </div>
+        `).join('');
+
+        tripsList.querySelectorAll('button[data-email]').forEach(btn => {
+            btn.addEventListener('click', () => unsubscribe(btn.dataset.email));
+        });
+    }
+
+    async function loadTrips(email) {
+        const data = await postAction({ action: 'list', user_email: email });
+        renderTrips(email, data.trips || []);
+    }
+
+    async function unsubscribe(email) {
+        if (!confirm('Stop receiving commute alerts for this email?')) return;
+        try {
+            await postAction({ action: 'unsubscribe', user_email: email });
+            showMessage('success', 'You have been unsubscribed.');
+            await loadTrips(email);
+        } catch (err) {
+            showMessage('error', '❌ ' + err.message);
+        }
+    }
+
+    document.getElementById('showManage').addEventListener('click', () => {
+        signupView.classList.add('hidden');
+        manageView.classList.remove('hidden');
+        tripsList.innerHTML = '';
+        hideMessage();
+    });
+
+    document.getElementById('showSignup').addEventListener('click', () => {
+        manageView.classList.add('hidden');
+        signupView.classList.remove('hidden');
+        tripsList.innerHTML = '';
+        hideMessage();
+    });
+
     document.getElementById('signupForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const submitBtn = document.getElementById('submitBtn');
-        const messageDiv = document.getElementById('message');
         const startCity = document.getElementById('startCity').value;
         const endCity = document.getElementById('endCity').value;
-        
+
         submitBtn.disabled = true;
         submitBtn.innerText = "Verifying locations...";
-        messageDiv.style.display = "none";
+        hideMessage();
 
-        // Validate locations first
         const isStartValid = await validateCity(startCity);
         const isEndValid = await validateCity(endCity);
 
         if (!isStartValid || !isEndValid) {
-            messageDiv.className = "error";
-            messageDiv.innerText = `❌ Could not find ${!isStartValid ? 'Start Location' : 'End Location'}. Please check spelling.`;
-            messageDiv.style.display = "block";
+            showMessage('error', `❌ Could not find ${!isStartValid ? 'Start Location' : 'End Location'}. Please check spelling.`);
             submitBtn.disabled = false;
             submitBtn.innerText = "Sign Up for Alerts";
             return;
@@ -108,36 +213,39 @@
 
         submitBtn.innerText = "Submitting...";
 
-        const payload = {
-            user_email: document.getElementById('email').value,
-            start_city: startCity,
-            end_city: endCity,
-            schedule_time: document.getElementById('scheduleTime').value
-        };
-
         try {
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(payload)
+            await postAction({
+                user_email: document.getElementById('email').value,
+                start_city: startCity,
+                end_city: endCity,
+                schedule_time: document.getElementById('scheduleTime').value
             });
-
-            const data = await response.json();
-
-            if (response.ok) {
-                messageDiv.className = "success";
-                messageDiv.innerText = "✅ Successfully subscribed! Your commute weather alerts are set.";
-                document.getElementById('signupForm').reset();
-            } else {
-                throw new Error(data.error || "Failed to register.");
-            }
+            showMessage('success', '✅ Successfully subscribed! Your commute weather alerts are set.');
+            document.getElementById('signupForm').reset();
         } catch (err) {
-            messageDiv.className = "error";
-            messageDiv.innerText = "❌ Error: " + err.message;
+            showMessage('error', '❌ Error: ' + err.message);
         } finally {
-            messageDiv.style.display = "block";
             submitBtn.disabled = false;
             submitBtn.innerText = "Sign Up for Alerts";
+        }
+    });
+
+    document.getElementById('signinForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const signinBtn = document.getElementById('signinBtn');
+        const email = document.getElementById('manageEmail').value.trim();
+        signinBtn.disabled = true;
+        signinBtn.innerText = "Looking up...";
+        hideMessage();
+        tripsList.innerHTML = '';
+
+        try {
+            await loadTrips(email);
+        } catch (err) {
+            showMessage('error', '❌ ' + err.message);
+        } finally {
+            signinBtn.disabled = false;
+            signinBtn.innerText = "View my trips";
         }
     });
 </script>

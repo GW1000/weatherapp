@@ -1,8 +1,12 @@
 # Security & Credentials
 .env
+.env.*
+!.env.example
 config.js
 *.pem
 secrets.json
+credentials.json
+**/secrets.py
 
 # Build Artifacts & Packages
 lambda_build/

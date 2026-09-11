@@ -5,15 +5,40 @@ import urllib.request
 from datetime import datetime
 from decimal import Decimal
 
-# Initialize DynamoDB resource
 dynamodb = boto3.resource('dynamodb', region_name='us-east-2')
 table = dynamodb.Table('CommuteUsers')
+
+CORS_HEADERS = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+}
+
+def respond(status, payload):
+    return {
+        'statusCode': status,
+        'headers': CORS_HEADERS,
+        'body': json.dumps(payload)
+    }
+
+def parse_body(event):
+    body = event
+    if isinstance(event, dict) and 'body' in event and event['body'] is not None:
+        if isinstance(event['body'], str):
+            try:
+                body = json.loads(event['body'])
+            except Exception:
+                body = {}
+        else:
+            body = event['body']
+    return body if isinstance(body, dict) else {}
 
 def geocode_city(city_name):
     clean_city = city_name.split(',')[0].strip()
     encoded_city = urllib.parse.quote(clean_city)
     url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_city}&count=1&language=en&format=json"
-    
+
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'CommuteAlertApp/1.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
@@ -29,40 +54,54 @@ def geocode_city(city_name):
         print(f"Geocoding error for '{city_name}': {str(e)}")
     return None
 
-def lambda_handler(event, context):
-    # Extract JSON payload
-    body = event
-    if isinstance(event, dict) and 'body' in event and event['body'] is not None:
-        if isinstance(event['body'], str):
-            try:
-                body = json.loads(event['body'])
-            except Exception:
-                body = {}
-        else:
-            body = event['body']
+def public_trip(item):
+    return {
+        'user_email': item.get('user_email'),
+        'start_city': item.get('start_city'),
+        'end_city': item.get('end_city'),
+        'schedule_time': item.get('schedule_time', '07:00'),
+        'created_at': item.get('created_at')
+    }
 
-    user_email = body.get('user_email')
+def get_trips(user_email):
+    item = table.get_item(Key={'user_email': user_email}).get('Item')
+    return [item] if item else []
+
+def lambda_handler(event, context):
+    if isinstance(event, dict) and event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
+        return respond(200, {'ok': True})
+
+    body = parse_body(event)
+    action = (body.get('action') or 'register').strip().lower()
+    user_email = (body.get('user_email') or '').strip()
+
+    if action == 'list':
+        if not user_email:
+            return respond(400, {'error': 'Missing required field: user_email'})
+        trips = [public_trip(item) for item in get_trips(user_email)]
+        return respond(200, {'trips': trips})
+
+    if action == 'unsubscribe':
+        if not user_email:
+            return respond(400, {'error': 'Missing required field: user_email'})
+        if not get_trips(user_email):
+            return respond(404, {'error': 'No subscription found for that email.'})
+        table.delete_item(Key={'user_email': user_email})
+        return respond(200, {'message': 'Unsubscribed successfully.'})
+
     start_city = body.get('start_city')
     end_city = body.get('end_city')
     schedule_time = body.get('schedule_time', '07:00')
 
     if not user_email or not start_city or not end_city:
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'error': 'Missing required fields: user_email, start_city, or end_city'})
-        }
+        return respond(400, {'error': 'Missing required fields: user_email, start_city, or end_city'})
 
-    # Geocode locations
     start_coords = geocode_city(start_city)
     end_coords = geocode_city(end_city)
 
     if not start_coords or not end_coords:
-        return {
-            'statusCode': 400,
-            'body': json.dumps({'error': 'Could not geocode one or both city locations. Check spelling.'})
-        }
+        return respond(400, {'error': 'Could not geocode one or both city locations. Check spelling.'})
 
-    # Save to DynamoDB
     item = {
         'user_email': user_email,
         'start_city': start_city,
@@ -75,20 +114,9 @@ def lambda_handler(event, context):
 
     try:
         table.put_item(Item=item)
-        return {
-            'statusCode': 200,
-            'body': json.dumps({
-                'message': 'User registered successfully!',
-                'data': {
-                    'user_email': user_email,
-                    'start_city': start_city,
-                    'end_city': end_city,
-                    'schedule_time': schedule_time
-                }
-            })
-        }
+        return respond(200, {
+            'message': 'User registered successfully!',
+            'data': public_trip(item)
+        })
     except Exception as e:
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'error': f"Failed to save to database: {str(e)}"})
-        }
+        return respond(500, {'error': f"Failed to save to database: {str(e)}"})
