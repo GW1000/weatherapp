@@ -68,55 +68,56 @@ def get_trips(user_email):
     return [item] if item else []
 
 def lambda_handler(event, context):
-    if isinstance(event, dict) and event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
-        return respond(200, {'ok': True})
-
-    body = parse_body(event)
-    action = (body.get('action') or 'register').strip().lower()
-    user_email = (body.get('user_email') or '').strip()
-
-    if action == 'list':
-        if not user_email:
-            return respond(400, {'error': 'Missing required field: user_email'})
-        trips = [public_trip(item) for item in get_trips(user_email)]
-        return respond(200, {'trips': trips})
-
-    if action == 'unsubscribe':
-        if not user_email:
-            return respond(400, {'error': 'Missing required field: user_email'})
-        if not get_trips(user_email):
-            return respond(404, {'error': 'No subscription found for that email.'})
-        table.delete_item(Key={'user_email': user_email})
-        return respond(200, {'message': 'Unsubscribed successfully.'})
-
-    start_city = body.get('start_city')
-    end_city = body.get('end_city')
-    schedule_time = body.get('schedule_time', '07:00')
-
-    if not user_email or not start_city or not end_city:
-        return respond(400, {'error': 'Missing required fields: user_email, start_city, or end_city'})
-
-    start_coords = geocode_city(start_city)
-    end_coords = geocode_city(end_city)
-
-    if not start_coords or not end_coords:
-        return respond(400, {'error': 'Could not geocode one or both city locations. Check spelling.'})
-
-    item = {
-        'user_email': user_email,
-        'start_city': start_city,
-        'end_city': end_city,
-        'start_coords': start_coords,
-        'end_coords': end_coords,
-        'schedule_time': schedule_time,
-        'created_at': datetime.utcnow().isoformat()
-    }
-
     try:
+        if isinstance(event, dict) and event.get('requestContext', {}).get('http', {}).get('method') == 'OPTIONS':
+            return respond(200, {'ok': True})
+
+        body = parse_body(event)
+        action = (body.get('action') or 'register').strip().lower()
+        user_email = (body.get('user_email') or '').strip()
+
+        if action == 'list':
+            if not user_email:
+                return respond(400, {'error': 'Missing required field: user_email'})
+            trips = [public_trip(item) for item in get_trips(user_email)]
+            return respond(200, {'trips': trips})
+
+        if action == 'unsubscribe':
+            if not user_email:
+                return respond(400, {'error': 'Missing required field: user_email'})
+            if not get_trips(user_email):
+                return respond(404, {'error': 'No subscription found for that email.'})
+            table.delete_item(Key={'user_email': user_email})
+            return respond(200, {'message': 'Unsubscribed successfully.'})
+
+        start_city = body.get('start_city')
+        end_city = body.get('end_city')
+        schedule_time = body.get('schedule_time', '07:00')
+
+        if not user_email or not start_city or not end_city:
+            return respond(400, {'error': 'Missing required fields: user_email, start_city, or end_city'})
+
+        start_coords = geocode_city(start_city)
+        end_coords = geocode_city(end_city)
+
+        if not start_coords or not end_coords:
+            return respond(400, {'error': 'Could not geocode one or both city locations. Check spelling.'})
+
+        item = {
+            'user_email': user_email,
+            'start_city': start_city,
+            'end_city': end_city,
+            'start_coords': start_coords,
+            'end_coords': end_coords,
+            'schedule_time': schedule_time,
+            'created_at': datetime.utcnow().isoformat()
+        }
+
         table.put_item(Item=item)
         return respond(200, {
             'message': 'User registered successfully!',
             'data': public_trip(item)
         })
     except Exception as e:
-        return respond(500, {'error': f"Failed to save to database: {str(e)}"})
+        print(f"Error executing action: {str(e)}")
+        return respond(500, {'error': f"Internal server error: {str(e)}"})
